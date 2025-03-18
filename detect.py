@@ -1,11 +1,16 @@
+from flask import Flask, request, jsonify
 import cv2
 import torch
 import numpy as np
 import torch.nn as nn
 import torchvision.transforms as transforms
 from PIL import Image
+import base64
+import io
 
-# Define the model architecture (same as in your training code)
+app = Flask(__name__)
+
+# Define the model architecture (same as in your original code)
 class CNNModel(nn.Module):
     def __init__(self, num_classes):
         super(CNNModel, self).__init__()
@@ -45,80 +50,113 @@ transform = transforms.Compose([
     transforms.Normalize((0.5,), (0.5,))  # Normalize
 ])
 
-def main():
-    # Check for GPU
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
-    
-    # Load the model
-    # You'll need to know the number of classes from your training data
-    num_classes = 7  # Update this based on your actual number of classes
-    model = CNNModel(num_classes).to(device)
-    model.load_state_dict(torch.load("BabyEmotion.pth", map_location=device))
-    model.eval()
-    
-    # Get class names (update these based on your actual classes)
-    class_names = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']  # Update with your actual classes
-    
-    # Start webcam
-    cap = cv2.VideoCapture(0)
-    
-    if not cap.isOpened():
-        print("Error: Could not open webcam")
-        return
-    
-    print("Webcam started. Press 'q' to quit.")
-    
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            print("Error: Failed to capture image")
-            break
-        
-        # Convert to grayscale for face detection
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        
-        # Detect faces
-        faces = face_cascade.detectMultiScale(gray, 1.1, 4)
-        
-        # Process each face
-        for (x, y, w, h) in faces:
-            # Draw rectangle around the face
-            cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
-            
-            # Extract face region
-            face_img = frame[y:y+h, x:x+w]
-            
-            # Convert to PIL Image
-            pil_img = Image.fromarray(cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB))
-            
-            # Apply transformations
-            img_tensor = transform(pil_img).unsqueeze(0).to(device)
-            
-            # Inference
-            with torch.no_grad():
-                outputs = model(img_tensor)
-                probabilities = torch.nn.functional.softmax(outputs, dim=1)[0]
-                predicted_class = torch.argmax(outputs, 1).item()
-            
-            # Get the class name and probability
-            emotion = class_names[predicted_class]
-            probability = probabilities[predicted_class].item() * 100
-            
-            # Display the result
-            result_text = f"{emotion}: {probability:.2f}%"
-            cv2.putText(frame, result_text, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36, 255, 12), 2)
-        
-        # Display the frame
-        cv2.imshow('Baby Emotion Recognition', frame)
-        
-        # Break the loop if 'q' is pressed
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-    
-    # Release the webcam and close windows
-    cap.release()
-    cv2.destroyAllWindows()
+# Load the model
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+num_classes = 7  # Update this based on your actual number of classes
+model = CNNModel(num_classes).to(device)
+model.load_state_dict(torch.load("BabyEmotion.pth", map_location=device))
+model.eval()
 
-if __name__ == "__main__":
-    main()
+# Get class names (update these based on your actual classes)
+class_names = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']
+
+@app.route('/')
+def home():
+    return jsonify({"message": "Baby Emotion Recognition API is running!"})
+
+@app.route('/predict', methods=['POST'])
+def predict():
+    if 'image' not in request.files:
+        # Check if image is sent as base64 in JSON
+        if request.is_json:
+            try:
+                data = request.get_json()
+                if 'image' not in data:
+                    return jsonify({'error': 'No image provided'}), 400
+                
+                # Decode base64 image
+                image_data = data['image']
+                if image_data.startswith('data:image'):
+                    # Handle data URL format
+                    image_data = image_data.split(',')[1]
+                
+                image_bytes = base64.b64decode(image_data)
+                image = Image.open(io.BytesIO(image_bytes))
+                
+                # Convert PIL Image to OpenCV format
+                opencv_image = np.array(image)
+                if len(opencv_image.shape) == 3 and opencv_image.shape[2] == 3:
+                    opencv_image = cv2.cvtColor(opencv_image, cv2.COLOR_RGB2BGR)
+            except Exception as e:
+                return jsonify({'error': f'Error processing image: {str(e)}'}), 400
+        else:
+            return jsonify({'error': 'No image provided'}), 400
+    else:
+        # Handle file upload
+        image_file = request.files['image']
+        # Read image file
+        image_bytes = image_file.read()
+        # Convert to OpenCV format
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        opencv_image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    
+    # Convert to grayscale for face detection
+    gray = cv2.cvtColor(opencv_image, cv2.COLOR_BGR2GRAY)
+    
+    # Detect faces
+    faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+    
+    results = []
+    
+    # Process each face
+    for (x, y, w, h) in faces:
+        # Extract face region
+        face_img = opencv_image[y:y+h, x:x+w]
+        
+        # Convert to PIL Image
+        pil_img = Image.fromarray(cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB))
+        
+        # Apply transformations
+        img_tensor = transform(pil_img).unsqueeze(0).to(device)
+        
+        # Inference
+        with torch.no_grad():
+            outputs = model(img_tensor)
+            probabilities = torch.nn.functional.softmax(outputs, dim=1)[0]
+            predicted_class = torch.argmax(outputs, 1).item()
+        
+        # Get the class name and probability
+        emotion = class_names[predicted_class]
+        probability = probabilities[predicted_class].item() * 100
+        
+        # Create a result object
+        face_result = {
+            'emotion': emotion,
+            'probability': probability,
+            'face_position': {
+                'x': int(x),
+                'y': int(y),
+                'width': int(w),
+                'height': int(h)
+            },
+            'all_probabilities': {
+                class_names[i]: float(probabilities[i].item() * 100) 
+                for i in range(len(class_names))
+            }
+        }
+        
+        results.append(face_result)
+    
+    if not results:
+        return jsonify({
+            'error': 'No faces detected in the image',
+            'faces_detected': 0
+        }), 200
+    
+    return jsonify({
+        'faces_detected': len(results),
+        'results': results
+    })
+
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0', port=5000)
