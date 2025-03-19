@@ -9,3 +9,4 @@ werkzeug
 matplotlib
 onnx
 tqdm
+gunicorn
