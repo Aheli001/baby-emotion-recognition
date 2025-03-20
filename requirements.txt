@@ -3,7 +3,7 @@ numpy
 tensorflow
 torch
 torchvision
-opencv-python
+opencv-python-headless
 Pillow
 werkzeug
 matplotlib

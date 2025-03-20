@@ -6,6 +6,7 @@ import torch.nn as nn
 import torchvision.transforms as transforms
 from PIL import Image
 import base64
+import os
 import io
 
 app = Flask(__name__)
@@ -40,7 +41,12 @@ class CNNModel(nn.Module):
         return x
 
 # Face detection setup
-face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+face_cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+if not os.path.exists(face_cascade_path):
+    raise RuntimeError("Haarcascade file not found!")
+
+face_cascade = cv2.CascadeClassifier(face_cascade_path)
+
 
 # Define the same transformations used in training
 transform = transforms.Compose([
@@ -159,4 +165,5 @@ def predict():
     })
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=0)
+    port = int(os.environ.get("PORT", 5000))  # Render provides PORT
+    app.run(debug=False, host='0.0.0.0', port=port)
