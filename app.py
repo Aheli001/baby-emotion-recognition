@@ -102,6 +102,9 @@ def predict():
     gray = cv2.cvtColor(opencv_image, cv2.COLOR_BGR2GRAY)
     faces = face_cascade.detectMultiScale(gray, 1.1, 4)
     
+    if len(faces) == 0:
+        return jsonify({'error': 'No face detected. Please provide a clear image with a visible face.'}), 400
+    
     results = []
     
     for (x, y, w, h) in faces:
@@ -119,31 +122,12 @@ def predict():
         
         face_result = {
             'emotion': emotion,
-            'probability': probability,
-            'face_position': {
-                'x': int(x),
-                'y': int(y),
-                'width': int(w),
-                'height': int(h)
-            },
-            'all_probabilities': {
-                class_names[i]: float(probabilities[i].item() * 100) 
-                for i in range(len(class_names))
-            }
+            'probability': probability
         }
         
         results.append(face_result)
     
-    if not results:
-        return jsonify({
-            'error': 'No faces detected in the image',
-            'faces_detected': 0
-        }), 200
-    
-    return jsonify({
-        'faces_detected': len(results),
-        'results': results
-    })
+    return jsonify({'results': results})
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
