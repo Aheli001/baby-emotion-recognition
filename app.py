@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from flask_cors import CORS  # Import CORS
 import cv2
 import torch
@@ -66,10 +66,13 @@ model.eval()
 
 class_names = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']
 
+#  home route
 @app.route('/')
 def home():
     return jsonify({"message": "Baby Emotion Recognition API is running!"})
 
+
+# route  enables to predict emotions from images uploaded via POST request
 @app.route('/predict', methods=['POST'])
 def predict():
     if 'image' not in request.files:
@@ -128,6 +131,46 @@ def predict():
         results.append(face_result)
     
     return jsonify({'results': results})
+
+
+# route  enables to predict emotions from video stream
+
+@app.route('/predict_video', methods=['GET'])
+def predict_video():
+    def generate_frames():
+        cap = cv2.VideoCapture(0)
+        while True:
+            success, frame = cap.read()
+            if not success:
+                break
+            
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+            
+            for (x, y, w, h) in faces:
+                face_img = frame[y:y+h, x:x+w]
+                pil_img = Image.fromarray(cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB))
+                img_tensor = transform(pil_img).unsqueeze(0).to(device)
+                
+                with torch.no_grad():
+                    outputs = model(img_tensor)
+                    probabilities = torch.nn.functional.softmax(outputs, dim=1)[0]
+                    predicted_class = torch.argmax(outputs, 1).item()
+                
+                emotion = class_names[predicted_class]
+                probability = probabilities[predicted_class].item() * 100
+                
+                cv2.putText(frame, f'{emotion} ({probability:.2f}%)', (x, y - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                
+            _, buffer = cv2.imencode('.jpg', frame)
+            frame_bytes = buffer.tobytes()
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+        cap.release()
+    
+    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
