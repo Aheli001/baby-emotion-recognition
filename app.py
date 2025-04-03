@@ -9,6 +9,8 @@ from PIL import Image
 import base64
 import os
 import io
+import google.generativeai as genai
+from dotenv import load_dotenv
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
@@ -133,7 +135,34 @@ def predict():
     return jsonify({'results': results})
 
 
-# route  enables to predict emotions from video stream
+load_dotenv()
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+genai.configure(api_key=GEMINI_API_KEY)
+
+# Global variables for tracking emotion and recommendation
+last_emotion = None
+last_recommendation = ""
+
+
+def get_gemini_recommendation(emotion):
+    """Fetches AI-based recommendations based on emotion using Gemini API."""
+    prompt = f"My baby is feeling {emotion}. Suggest a specific activity (max 25 words) that parents can do to comfort, engage, or support their baby in this state."
+    
+    try:
+        model = genai.GenerativeModel("gemini-2.0-flash")
+        response = model.generate_content(prompt)
+        
+        if response and hasattr(response, 'text'):
+            # Clean up the response to ensure it's concise
+            recommendation = response.text.strip()
+            # If the response is too long, take the first sentence
+            recommendation = recommendation.split('.')[0] + '.'
+            return recommendation
+        return "Try gentle rocking and soft singing to soothe the baby."
+    except Exception as e:
+        print(f"Error fetching Gemini API response: {str(e)}")
+        return "Try gentle rocking and soft singing to soothe the baby."
 
 @app.route('/predict_video', methods=['GET'])
 def predict_video():
@@ -143,34 +172,51 @@ def predict_video():
             success, frame = cap.read()
             if not success:
                 break
-            
+
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             faces = face_cascade.detectMultiScale(gray, 1.1, 4)
-            
+
+            global last_emotion
+            detected_emotion = "neutral"
+
             for (x, y, w, h) in faces:
                 face_img = frame[y:y+h, x:x+w]
                 pil_img = Image.fromarray(cv2.cvtColor(face_img, cv2.COLOR_BGR2RGB))
                 img_tensor = transform(pil_img).unsqueeze(0).to(device)
-                
+
                 with torch.no_grad():
                     outputs = model(img_tensor)
                     probabilities = torch.nn.functional.softmax(outputs, dim=1)[0]
                     predicted_class = torch.argmax(outputs, 1).item()
-                
-                emotion = class_names[predicted_class]
+
+                detected_emotion = class_names[predicted_class]
                 probability = probabilities[predicted_class].item() * 100
-                
-                cv2.putText(frame, f'{emotion} ({probability:.2f}%)', (x, y - 10),
+
+                cv2.putText(frame, f'{detected_emotion} ({probability:.2f}%)', (x, y - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
                 cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                
+
+            last_emotion = detected_emotion  # Update the global emotion variable
             _, buffer = cv2.imencode('.jpg', frame)
             frame_bytes = buffer.tobytes()
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+
         cap.release()
-    
+
     return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route('/get_current_emotion', methods=['GET'])
+def get_current_emotion():
+    """Endpoint to get the current detected emotion."""
+    global last_emotion
+    return jsonify({"emotion": last_emotion if last_emotion else "neutral"})
+
+@app.route('/get_suggestion/<emotion>', methods=['GET'])
+def get_suggestion(emotion):
+    """Endpoint to fetch suggestions from Gemini based on detected emotion."""
+    recommendation = get_gemini_recommendation(emotion)
+    return jsonify({"emotion": emotion, "recommendation": recommendation})
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))

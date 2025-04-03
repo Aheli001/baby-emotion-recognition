@@ -11,3 +11,5 @@ matplotlib
 onnx
 tqdm
 gunicorn
+google-generativeai
+python-dotenv
