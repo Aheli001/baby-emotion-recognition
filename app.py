@@ -193,42 +193,16 @@ def predict():
 
 @app.route('/predict_video', methods=['GET'])
 def predict_video():
-    global processing_thread, stop_thread
-    
-    def generate_frames():
-        global processing_thread, stop_thread
-        
-        # Stop any existing processing thread
-        if processing_thread and processing_thread.is_alive():
-            stop_thread = True
-            processing_thread.join()
-        
-        # Clear the queue
-        while not frame_queue.empty():
-            frame_queue.get()
-        
-        # Start new processing thread
-        stop_thread = False
-        processing_thread = threading.Thread(target=process_video_frames)
-        processing_thread.daemon = True
-        processing_thread.start()
-        
-        try:
-            while True:
-                if frame_queue.empty():
-                    time.sleep(0.1)
-                    continue
-                    
-                frame = frame_queue.get()
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-        except GeneratorExit:
-            stop_thread = True
-            if processing_thread and processing_thread.is_alive():
-                processing_thread.join()
-    
-    return Response(generate_frames(),
-                   mimetype='multipart/x-mixed-replace; boundary=frame')
+    # Capture a single frame from webcam or wherever
+    success, frame = video_capture.read()
+    if not success:
+        return "Camera error", 500
+
+    # (Optional) do emotion detection and overlay it here
+    _, buffer = cv2.imencode('.jpg', frame)
+    response = make_response(buffer.tobytes())
+    response.headers['Content-Type'] = 'image/jpeg'
+    return response
 
 @app.route('/get_current_emotion', methods=['GET'])
 def get_current_emotion():
